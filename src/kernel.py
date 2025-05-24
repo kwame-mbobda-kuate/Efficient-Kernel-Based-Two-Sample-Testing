@@ -1,26 +1,72 @@
 from abc import ABC, abstractmethod
 import numpy as np
 import scipy
-from scipy.spatial.distance import pdist, cdist
+from sklearn.gaussian_process.kernels import RBF
+import johnson
+
+
+def nondiag(X):
+    Y = X.copy()
+    np.fill_diagonal(Y, 0)
+    return Y
 
 
 class Kernel(ABC):
 
-
     @abstractmethod
-    def kernel_pairwise_matrix(self, X):
-        pass
-
-    @abstractmethod
-    def kernel_vector(self, X, Y):
-        pass
+    def __call__(self, X, Y):
+        raise NotImplementedError
     
     def features(self, X, Z):
-        kernel_matrix = self.kernel_pairwise_matrix(Z)
+        kernel_matrix = self(Z, Z)
         K = scipy.linalg.sqrtm(np.linalg.pinv(kernel_matrix, hermitian=True))
-        return K @ self.kernel_vector(Z, X)
+        return K @ self(Z, X)
     
-    def mmd_nystrom_uniform(X, Y, a, P):
+    def h_kernel(self, X, Y):
+        cross_matrix = self(X, Y)
+        return self(X) + self(Y) - cross_matrix - cross_matrix.T
+    
+    def mmd_U(self, X, Y):
+        """
+        Computes an unbiased estimator of the squared MMD of two samples.
+        Based on Gretton 2012, p.6 - 7 (lemma 6).
+        Assumes X and Y have the same shape.
+        """
+        m = np.shape(X)[0]
+        h_matrix = self.h_kernel(X, Y)
+        return m * nondiag(h_matrix).sum() / ((m * (m - 1)))
+    
+    def moments_mmd_U(self, X, Y):
+        """
+        Computes the moment of the MMD U.
+        Gretton 2012 p.15 (11), (12), (13)
+        """
+        m = np.shape(X)[0]
+        h_matrix = self.h_kernel(X, Y)
+        sq_h_matrix = h_matrix ** 2
+
+        variance = 2 / (m*(m-1)) * nondiag(sq_h_matrix).sum() / ((m-1) * m)
+        variance *= m**2
+
+        int_exp = h_matrix @ h_matrix.T - np.diag(h_matrix) * h_matrix - np.diag(np.array(h_matrix)).T * h_matrix
+        int_exp = int_exp / (m - 2)
+        moment_3 = 8 * (m - 2) / (m**2 * (m - 1) ** 2) * nondiag(self.h_kernel(X, Y) * int_exp).sum() / (m * (m - 1))
+        moment_3 *= m**3
+
+        skewness = moment_3 / variance ** (3 / 2)
+        kurtosis = 2 * (skewness ** 2 + 1)
+
+        return [0, variance, skewness, kurtosis]    
+
+
+    def test_mmd_U(self, X, Y, a, pval=False):
+        johnson_dist = johnson.fit_johnsonsu_by_moments(*self.moments_mmd_U(X, Y))
+        test_stat = self.mmd_U(X, Y)
+        if pval:
+            return johnson_dist.cdf(test_stat)
+        return self.mmd_U(X, Y) <= johnson_dist.ppf(1-a)
+    
+    def test_mmd_nystrom_uniform(self, X, Y, a, P, pval=False):
         W = np.concat(X, Y)
         n_x = np.shape(X)[0]
         n_y = np.shape(Y)[0]
@@ -42,6 +88,8 @@ class Kernel(ABC):
         psi = np.linalg.norm(v, axis=1)
         b_a = np.floor((1-a)*(p+1))
         psi_b_a = np.partition(psi, b_a)[b_a]
+
+
         if psi[0] > psi_b_a:
             return 1
         elif psi[0] == psi_b_a:
@@ -52,13 +100,10 @@ class Kernel(ABC):
         return 0
 
 
-class GaussianKernel(Kernel):
+class GaussianKernel(RBF, Kernel):
 
-    def __init__(self, bandwidth):
-        self.bandwidth = bandwidth
-
-    def kernel_pairwise_matrix(self, X):
-        return np.exp(-pdist(X) ** 2 / (2 * self.bandwidth ** 2))
+    def __init__(self, *args, **kwargs):
+        RBF.__init__(self, *args, **kwargs)
     
-    def kernel_vector(self, X, Y):
-        return np.exp(-cdist(X, Y) ** 2 / (2 * self.bandwidth ** 2))
+    def auto_length(X, n):
+        pass
