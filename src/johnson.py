@@ -15,4 +15,4 @@ def fit_johnsonsu_by_moments(mean, var, skew, kurt):
 
     initial_guess = [1.0, 1.0, mean, np.sqrt(var)]
     result = minimize(objective, initial_guess, method='L-BFGS-B')
-    return johnsonsu(*result)
+    return johnsonsu(*result.x)
