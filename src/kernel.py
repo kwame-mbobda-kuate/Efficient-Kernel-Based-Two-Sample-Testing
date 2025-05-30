@@ -58,7 +58,7 @@ class Kernel(ABC):
         n = n_x + n_y
         l = l_x + l_y
 
-        inds = np.concat((rng.integers(n_x, size=l_x), rng.choice(n_y, size=l_y) + n_x))
+        inds = np.concat((rng.choice(n_x, size=l_x, replace=False), rng.choice(n_y, size=l_y, replace=False) + n_x))
 
         w_0 = np.concat((np.ones(n_x) / n_x, -np.ones(n_y) / n_y)).reshape(1, n)
         w = np.repeat(w_0, P + 1, axis=0)
